@@ -35,6 +35,7 @@ from urllib.parse import urlparse, parse_qs
 
 import brother_machine as bm
 import convert
+import render
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 MACHINES_FILE = os.path.join(BASE, "machines.json")
@@ -178,6 +179,30 @@ PAGE = r"""<!doctype html><html lang="pt-br"><head><meta charset="utf-8">
    <ul id="catalog"></ul>
  </div>
 
+ <div class="card" id="previewCard" style="display:none">
+   <div style="display:flex;justify-content:space-between;align-items:center"><h3 id="pvTitle">Visualizar bordado</h3><button class="ghost sm" onclick="document.getElementById('previewCard').style.display='none'">fechar</button></div>
+   <div class="row" style="align-items:flex-start">
+     <div id="pvImg" style="flex:0 0 auto"></div>
+     <div style="flex:1;min-width:220px">
+       <div id="pvFicha" class="muted"></div>
+       <button class="sm" style="margin:10px 0 0" onclick="usarNoProgresso()">Usar no acompanhamento ▼</button>
+     </div>
+   </div>
+ </div>
+
+ <div class="card">
+   <h3>Acompanhar bordado (estimado)</h3>
+   <div class="muted" style="margin-bottom:8px">A maquina nao envia o progresso real. Aqui e uma <b>estimativa por tempo</b>: informe os pontos e a velocidade, e toque em Iniciar quando comecar na maquina.</div>
+   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+     <label class="muted">Pontos <input id="prgTotal" type="number" value="9278" style="width:90px;background:#11141a;color:var(--tx);border:1px solid var(--ln);border-radius:8px;padding:6px"></label>
+     <label class="muted">Pontos/min <input id="prgSpm" type="number" value="850" style="width:80px;background:#11141a;color:var(--tx);border:1px solid var(--ln);border-radius:8px;padding:6px"></label>
+     <button id="prgStart" onclick="prgStart()">Iniciar</button>
+     <button class="ghost" onclick="prgReset()">Zerar</button>
+   </div>
+   <div class="bar" style="margin-top:12px"><i id="prgBar" style="width:0%"></i></div>
+   <div class="v" id="prgTxt" style="margin-top:6px">—</div>
+ </div>
+
  <div class="card"><h3>Historico de envios</h3><ul id="history"></ul></div>
  <div class="muted">Painel local • fala direto com a maquina • sem app, sem nuvem</div>
 </div>
@@ -215,9 +240,10 @@ async function loadCatalog(){
   $('#cdir').textContent=d.dir;
   const ul=$('#catalog');ul.innerHTML='';
   if(!d.files.length){ul.innerHTML='<li class="muted">nenhum arquivo na pasta designs/</li>';return;}
-  d.files.forEach(f=>{const li=document.createElement('li');li.className='item';
+  d.files.forEach(f=>{const li=document.createElement('li');li.className='item';const fe=encodeURIComponent(f.name);
     li.innerHTML='<span>📄 '+f.name+'</span><span class="muted">'+human(f.size)+'</span>'+
-      '<button class="sm" onclick="sendCatalog(this,\''+encodeURIComponent(f.name)+'\')">Enviar</button>';
+      '<button class="ghost sm" onclick="verCatalog(\''+fe+'\')">👁 Ver</button>'+
+      '<button class="sm" style="margin-left:8px" onclick="sendCatalog(this,\''+fe+'\')">Enviar</button>';
     ul.appendChild(li);});
 }
 async function loadHistory(){
@@ -241,10 +267,61 @@ drop.onclick=()=>fileInput.click();fileInput.onchange=e=>addFiles(e.target.files
 drop.addEventListener('drop',e=>addFiles(e.dataTransfer.files));
 function addFiles(list){[...list].forEach(f=>{const rd=new FileReader();rd.onload=()=>{queue.push({name:f.name,b64:rd.result.split(',')[1],state:'wait'});render();};rd.readAsDataURL(f);});}
 function render(){const ul=$('#queue');ul.innerHTML='';
-  queue.forEach(q=>{const li=document.createElement('li');li.className='item';
+  queue.forEach((q,i)=>{const li=document.createElement('li');li.className='item';
     const t={wait:['wait','na fila'],go:['go','enviando...'],ok:['ok','enviado ✓'],er:['er','erro ✗']}[q.state];
-    li.innerHTML='<span>📄 '+q.name+'</span><span class="tag '+t[0]+'">'+t[1]+'</span>';ul.appendChild(li);});
+    li.innerHTML='<span>📄 '+q.name+'</span><span class="tag '+t[0]+'">'+t[1]+'</span>'+
+      '<button class="ghost sm" style="margin-left:8px" onclick="verQueue('+i+')">👁 Ver</button>';
+    ul.appendChild(li);});
   $('#send').disabled=queue.length===0||queue.every(q=>q.state==='ok');}
+
+let lastFicha=null;
+function showPreview(d,title){
+  if(d.error||!d.ok){alert('Nao consegui ler o bordado: '+(d.error||''));return;}
+  lastFicha=d;
+  $('#pvTitle').textContent='Visualizar: '+title;
+  $('#pvImg').innerHTML=d.svg;
+  $('#pvFicha').innerHTML=
+    '<b>'+d.stitches.toLocaleString('pt-BR')+'</b> pontos<br>'+
+    d.colors+' cores ('+d.color_changes+' trocas) • '+d.trims+' cortes<br>'+
+    'Tamanho: '+d.width_mm+' x '+d.height_mm+' mm<br>'+
+    'Tempo estimado: ~'+d.est_min+' min (a 850 ppm)';
+  const c=$('#previewCard');c.style.display='block';c.scrollIntoView({behavior:'smooth',block:'center'});
+}
+async function verCatalog(fe){
+  const d=await (await fetch('/api/analyze_catalog?file='+fe)).json();
+  showPreview(d, decodeURIComponent(fe));
+}
+async function verQueue(i){
+  const q=queue[i];
+  const d=await (await fetch('/api/analyze?name='+encodeURIComponent(q.name),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:Uint8Array.from(atob(q.b64),c=>c.charCodeAt(0))})).json();
+  showPreview(d,q.name);
+}
+function usarNoProgresso(){
+  if(lastFicha){$('#prgTotal').value=lastFicha.stitches;
+    document.querySelector('#prgStart').scrollIntoView({behavior:'smooth',block:'center'});}
+}
+
+// ---- acompanhamento estimado (localStorage) ----
+function prgStart(){
+  const total=parseInt($('#prgTotal').value)||0, spm=parseInt($('#prgSpm').value)||850;
+  if(total<=0){alert('Informe o total de pontos.');return;}
+  localStorage.setItem('prg',JSON.stringify({total,spm,start:Date.now()}));
+  prgTick();
+}
+function prgReset(){localStorage.removeItem('prg');$('#prgBar').style.width='0%';$('#prgTxt').textContent='—';}
+function prgTick(){
+  const raw=localStorage.getItem('prg');if(!raw){return;}
+  const p=JSON.parse(raw);
+  const elapsedMin=(Date.now()-p.start)/60000;
+  const done=Math.min(p.total, Math.round(elapsedMin*p.spm));
+  const pct=Math.min(100, Math.round(done/p.total*100));
+  const restPts=Math.max(0,p.total-done);
+  const restMin=restPts/p.spm;
+  $('#prgBar').style.width=pct+'%';
+  if(pct>=100){$('#prgTxt').textContent='Estimativa: concluido ('+p.total.toLocaleString('pt-BR')+' pontos).';}
+  else{$('#prgTxt').textContent='~'+pct+'% • '+done.toLocaleString('pt-BR')+' / '+p.total.toLocaleString('pt-BR')+' pontos • faltam ~'+restMin.toFixed(1)+' min';}
+}
+setInterval(prgTick,1000);
 async function sendAll(){$('#send').disabled=true;
   for(const q of queue){if(q.state==='ok')continue;q.state='go';render();
     try{const r=await fetch('/api/send?ip='+encodeURIComponent(ip())+'&name='+encodeURIComponent(q.name),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:Uint8Array.from(atob(q.b64),c=>c.charCodeAt(0))});
@@ -289,6 +366,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"dir": DESIGNS_DIR, "files": catalog()})
         elif p.path == "/api/history":
             self._json({"history": read_history(50)})
+        elif p.path == "/api/analyze_catalog":
+            fn = sanitize((q.get("file") or [""])[0])
+            path = os.path.join(DESIGNS_DIR, fn)
+            if not os.path.isfile(path):
+                self._json({"ok": False, "error": "arquivo nao encontrado"})
+                return
+            try:
+                self._json(render.analyze(open(path, "rb").read(), fn))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
         else:
             self.send_error(404)
 
@@ -296,7 +383,15 @@ class Handler(BaseHTTPRequestHandler):
         p = urlparse(self.path)
         q = parse_qs(p.query)
         ip = (q.get("ip") or [default_ip()])[0]
-        if p.path == "/api/send":
+        if p.path == "/api/analyze":
+            name = self.headers.get("X-Filename") or (q.get("name") or ["bordado.pes"])[0]
+            n = int(self.headers.get("Content-Length", 0))
+            raw = self.rfile.read(n)
+            try:
+                self._json(render.analyze(raw, name))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+        elif p.path == "/api/send":
             name = self.headers.get("X-Filename") or (q.get("name") or ["bordado.pes"])[0]
             n = int(self.headers.get("Content-Length", 0))
             raw = self.rfile.read(n)

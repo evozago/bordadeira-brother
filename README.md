@@ -99,6 +99,7 @@ A máquina expõe um servidor HTTPS local com a API `pedxml`. O envio é um
 |--------|--------|
 | `brother_machine.py` | Biblioteca do protocolo (info / status / send) |
 | `convert.py` | Conversão de formatos para PES (pyembroidery) |
+| `render.py` | Ficha técnica + imagem (SVG) do bordado |
 | `server.py` | Painel web + API REST (multi-máquina, catálogo, histórico) |
 | `send_cli.py` | Envio por linha de comando |
 | `machines.json` | Lista de máquinas (criado na 1ª execução) |
@@ -113,6 +114,11 @@ A máquina expõe um servidor HTTPS local com a API `pedxml`. O envio é um
 - **Checagem de espaço** — recusa o envio se não couber na memória ou passar do limite.
 - **Histórico** — registro de tudo que foi enviado (`history.json`).
 - **Nomes padronizados** — o nome é higienizado e recebe extensão `.pes`.
+- **Ficha + imagem do bordado** — desenha a prévia a partir dos pontos do
+  arquivo (não é câmera) e mostra total de pontos, cores, tamanho e tempo
+  estimado. Endpoints `/api/analyze` (POST bytes) e `/api/analyze_catalog?file=`.
+- **Acompanhamento estimado** — barra de progresso por tempo (total de pontos ×
+  velocidade), já que a máquina não envia o progresso real.
 
 ## Limitações / próximos passos
 
