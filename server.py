@@ -28,6 +28,8 @@ import argparse
 import json
 import os
 import re
+import subprocess
+import sys
 import time
 import webbrowser
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -118,7 +120,7 @@ def process_and_send(ip, raw, name):
 
 # ---------------- página web ----------------
 PAGE = r"""<!doctype html><html lang="pt-br"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Bordadeira</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Gerenciador Máquina de Bordar Brother</title>
 <style>
  :root{--bg:#0f1115;--card:#1a1d24;--ln:#2a2f3a;--tx:#e8eaed;--mut:#9aa0ab;--ac:#4f8cff;--ok:#39c07a;--er:#ff5d5d}
  *{box-sizing:border-box}body{margin:0;font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--tx)}
@@ -143,7 +145,7 @@ PAGE = r"""<!doctype html><html lang="pt-br"><head><meta charset="utf-8">
  .muted{color:var(--mut);font-size:12px}.err{color:var(--er)}a{color:var(--ac)}
  h3{font-size:15px;margin:0 0 6px}
 </style></head><body><div class="wrap">
- <h1>🧵 Gerenciador da Bordadeira</h1>
+ <h1>🧵 Gerenciador Máquina de Bordar Brother</h1>
  <div class="sub" id="sub">conectando...</div>
 
  <div class="card" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
@@ -174,7 +176,7 @@ PAGE = r"""<!doctype html><html lang="pt-br"><head><meta charset="utf-8">
  </div>
 
  <div class="card">
-   <h3>Catalogo</h3>
+   <div style="display:flex;justify-content:space-between;align-items:center"><h3>Catalogo</h3><button class="ghost sm" onclick="abrirPasta()">📂 Abrir pasta</button></div>
    <div class="muted" style="margin-bottom:8px">Pasta de bordados no computador. Coloque arquivos em <code id="cdir">designs/</code> e atualize.</div>
    <ul id="catalog"></ul>
  </div>
@@ -245,6 +247,10 @@ async function loadCatalog(){
       '<button class="ghost sm" onclick="verCatalog(\''+fe+'\')">👁 Ver</button>'+
       '<button class="sm" style="margin-left:8px" onclick="sendCatalog(this,\''+fe+'\')">Enviar</button>';
     ul.appendChild(li);});
+}
+async function abrirPasta(){
+  try{const d=await (await fetch('/api/open_folder',{method:'POST'})).json();
+    if(!d.ok)alert('Nao consegui abrir: '+(d.error||''));}catch(e){alert('erro: '+e.message);}
 }
 async function loadHistory(){
   const d=await (await fetch('/api/history')).json();
@@ -407,6 +413,18 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 self._json(process_and_send(ip, open(path, "rb").read(), fn))
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+        elif p.path == "/api/open_folder":
+            try:
+                os.makedirs(DESIGNS_DIR, exist_ok=True)
+                if sys.platform == "darwin":
+                    subprocess.Popen(["open", DESIGNS_DIR])
+                elif os.name == "nt":
+                    os.startfile(DESIGNS_DIR)  # type: ignore[attr-defined]
+                else:
+                    subprocess.Popen(["xdg-open", DESIGNS_DIR])
+                self._json({"ok": True, "dir": DESIGNS_DIR})
             except Exception as e:
                 self._json({"ok": False, "error": str(e)})
         elif p.path in ("/api/delete", "/api/rename"):
