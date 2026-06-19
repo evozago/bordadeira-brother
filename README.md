@@ -46,9 +46,12 @@ Suba o servidor (`python3 server.py`) e chame de qualquer linguagem:
 
 | Método | Rota | Descrição |
 |-------|------|-----------|
-| GET | `/api/status` | Dados da máquina + espaço + lista de arquivos |
-| GET | `/api/files`  | Só a lista de arquivos na máquina |
-| POST | `/api/send?name=ARQ.pes` | Envia um `.pes` (corpo = bytes do arquivo) |
+| GET | `/api/machines` | Lista as máquinas configuradas (`machines.json`) |
+| GET | `/api/status?ip=...` | Dados da máquina + espaço + lista de arquivos |
+| GET | `/api/catalog` | Lista os bordados da pasta local `designs/` |
+| GET | `/api/history` | Histórico de envios |
+| POST | `/api/send?ip=...&name=ARQ.pes` | Envia um arquivo (corpo = bytes). Converte p/ PES se preciso, checa espaço, registra histórico |
+| POST | `/api/send_catalog?ip=...&file=NOME` | Envia um item do catálogo |
 
 ### Exemplos
 
@@ -95,14 +98,36 @@ A máquina expõe um servidor HTTPS local com a API `pedxml`. O envio é um
 | Arquivo | Função |
 |--------|--------|
 | `brother_machine.py` | Biblioteca do protocolo (info / status / send) |
-| `server.py` | Painel web + API REST |
+| `convert.py` | Conversão de formatos para PES (pyembroidery) |
+| `server.py` | Painel web + API REST (multi-máquina, catálogo, histórico) |
 | `send_cli.py` | Envio por linha de comando |
+| `machines.json` | Lista de máquinas (criado na 1ª execução) |
+| `designs/` | Pasta do catálogo de bordados |
 | `PROTOCOL.md` | Documentação do protocolo |
+
+## Recursos (v2)
+
+- **Multi-máquina** — configure várias bordadeiras em `machines.json`.
+- **Catálogo** — coloque arquivos na pasta `designs/` e envie pelo painel.
+- **Conversão automática** — DST/EXP/JEF/VP3/XXX → PES (requer `pip3 install pyembroidery`).
+- **Checagem de espaço** — recusa o envio se não couber na memória ou passar do limite.
+- **Histórico** — registro de tudo que foi enviado (`history.json`).
+- **Nomes padronizados** — o nome é higienizado e recebe extensão `.pes`.
 
 ## Limitações / próximos passos
 
-- **Enviar** e **listar/monitorar** funcionam. **Apagar/editar** arquivos na
-  máquina ainda não foi mapeado (precisaria de nova captura do software oficial).
+- **Enviar**, **listar** e **monitorar espaço** funcionam.
+- **Apagar / renomear na máquina** ainda não foi mapeado. O endpoint existe
+  (`/api/delete`, `/api/rename`) mas responde "não implementado": falta uma
+  **captura** do software oficial fazendo essas ações para descobrir o formato.
+  (Obs.: a própria máquina renomeia os arquivos com números sequenciais ao
+  recebê-los, então "renomear na máquina" pode não existir do lado dela.)
+- **Tempo real (câmera / progresso da costura)**: **não disponível neste modelo**.
+  O `/info` reporta as APIs `monitoring`, `camera` e `streaming` em `version: 0`
+  (desligadas), e todos os endpoints correspondentes retornam 404. Esses recursos
+  são exclusivos das máquinas premium da Brother (ex.: Luminaire/Stellaire), que
+  têm câmera embutida e essas APIs ativas. Não é uma trava destravável — o
+  recurso não existe no hardware/firmware da BP1530L.
 - Testado na **BP1530L** (firmware 1.73). Outros modelos WLAN da Brother usam o
   mesmo padrão, mas podem variar.
 

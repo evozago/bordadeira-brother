@@ -6,9 +6,20 @@ venv/
 
 # Bordados de teste / capturas (não versionar dados)
 *.pes
+*.dst
+*.exp
+*.jef
+*.vp3
+*.xxx
 flows
 *.mitm
 *.log
+
+# Config e dados locais (gerados em runtime)
+machines.json
+history.json
+designs/*
+!designs/.gitkeep
 
 # OS
 .DS_Store
