@@ -7,6 +7,9 @@ brother_machine.py — Biblioteca de comunicação com bordadeiras Brother
 Protocolo descoberto por engenharia reversa do "Design Database Transfer".
 Veja PROTOCOL.md. Sem app, sem nuvem. Usa apenas a biblioteca padrão do Python 3.
 
+Inclui repetição automática (retry) e timeouts folgados, porque a conexão
+Wi-Fi dessas máquinas costuma ser lenta/instável.
+
 Funções principais:
     info(ip)             -> dict com dados da máquina (/info)
     status(ip)           -> dict com espaço livre e lista de arquivos
@@ -17,6 +20,7 @@ import http.client
 import json
 import re
 import ssl
+import time
 import uuid
 
 ENDPOINT = "/sewing/sewing.cgi"
@@ -28,8 +32,13 @@ COMMON = {
     "Cache-Control": "no-cache",
 }
 
+# Tolerância a Wi-Fi lento/instável
+TIMEOUT = 25       # segundos por tentativa
+RETRIES = 4        # tentativas para leituras
+RETRY_DELAY = 1.5  # espera entre tentativas
 
-def _conn(ip, timeout=30):
+
+def _conn(ip, timeout=TIMEOUT):
     """Conexão HTTPS sem verificar certificado (a máquina usa cert auto-assinado)."""
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
@@ -37,28 +46,44 @@ def _conn(ip, timeout=30):
     return http.client.HTTPSConnection(ip, 443, timeout=timeout, context=ctx)
 
 
+def _run(fn, retries=RETRIES):
+    """Executa fn() com repetição automática em caso de falha de rede."""
+    last = None
+    for i in range(retries):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            last = e
+            if i < retries - 1:
+                time.sleep(RETRY_DELAY)
+    raise last
+
+
 def info(ip):
     """GET /info -> dados da máquina (modelo, série, firmware, limites)."""
-    c = _conn(ip, 10)
-    try:
-        c.request("GET", "/info", headers={"User-Agent": USER_AGENT})
-        r = c.getresponse()
-        return json.loads(r.read().decode("utf-8", "replace"))
-    finally:
-        c.close()
+    def call():
+        c = _conn(ip)
+        try:
+            c.request("GET", "/info", headers={"User-Agent": USER_AGENT})
+            return json.loads(c.getresponse().read().decode("utf-8", "replace"))
+        finally:
+            c.close()
+    return _run(call)
 
 
 def status(ip):
     """POST sewing.cgi (appstate=2) -> espaço e arquivos na memória."""
-    body = f"req_sessionid=0&req_appid={APP_ID}&req_appver=1.2.0&req_appstate=2".encode()
-    h = dict(COMMON)
-    h["Content-Type"] = "application/x-www-form-urlencoded"
-    c = _conn(ip, 10)
-    try:
-        c.request("POST", ENDPOINT, body=body, headers=h)
-        xml = c.getresponse().read().decode("utf-8", "replace")
-    finally:
-        c.close()
+    def call():
+        body = f"req_sessionid=0&req_appid={APP_ID}&req_appver=1.2.0&req_appstate=2".encode()
+        h = dict(COMMON)
+        h["Content-Type"] = "application/x-www-form-urlencoded"
+        c = _conn(ip)
+        try:
+            c.request("POST", ENDPOINT, body=body, headers=h)
+            return c.getresponse().read().decode("utf-8", "replace")
+        finally:
+            c.close()
+    xml = _run(call)
 
     def g(tag):
         m = re.search(rf"<{tag}>(.*?)</{tag}>", xml, re.S)
@@ -96,11 +121,15 @@ def send(ip, pes_bytes, filename):
     h["Content-Type"] = "multipart/form-data;boundary=" + boundary
     h["Accept-Encoding"] = "gzip,deflate"
     h["Connection"] = "Keep-Alive"
-    c = _conn(ip, 60)
-    try:
-        c.request("POST", ENDPOINT, body=body, headers=h)
-        r = c.getresponse()
-        r.read()
-        return (r.status in (200, 204)), r.status
-    finally:
-        c.close()
+
+    def call():
+        c = _conn(ip, max(TIMEOUT, 60))
+        try:
+            c.request("POST", ENDPOINT, body=body, headers=h)
+            r = c.getresponse()
+            r.read()
+            return (r.status in (200, 204)), r.status
+        finally:
+            c.close()
+    # menos tentativas no envio para evitar duplicar arquivo
+    return _run(call, retries=2)
